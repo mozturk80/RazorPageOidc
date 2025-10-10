@@ -5,6 +5,12 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
+
+// Enable logging to Debug window
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+
 builder.Services.AddAuthentication(o =>
 {
     o.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
@@ -13,53 +19,63 @@ builder.Services.AddAuthentication(o =>
 .AddCookie()
 .AddOpenIdConnect(o =>
 {
-    // ........................................................................
-    // The OIDC handler must use a sign-in scheme capable of persisting 
-    // user credentials across requests.
-
     o.SignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-    // ........................................................................
-
-    // ........................................................................
-    // The "openid" and "profile" scopes are required for the OIDC handler 
-    // and included by default. 
-
-    //options.Scope.Add("some-scope");
-    // ........................................................................
-
-    // ........................................................................
-    // The following paths must match the redirect and post logout redirect 
-    // paths configured when registering the application with the OIDC provider. 
-    // Both the signin and signout paths must be registered as Redirect URIs.
-    // The default values are "/signin-oidc" and "/signout-callback-oidc".
-
-    //options.CallbackPath = new PathString("/signin-oidc");
-    //options.SignedOutCallbackPath = new PathString("/signout-callback-oidc");
-    // ........................................................................
-
-    // ........................................................................
-    // The RemoteSignOutPath is the "Front-channel logout URL" for remote single 
-    // sign-out. The default value is "/signout-oidc".
-
-    //options.RemoteSignOutPath = new PathString("/signout-oidc");
-    // ........................................................................
-
     o.Authority = builder.Configuration["OpenIDConnectSettings:Authority"];
     o.ClientId = builder.Configuration["OpenIDConnectSettings:ClientId"];
     o.ClientSecret = builder.Configuration["OpenIDConnectSettings:ClientSecret"];
     o.ResponseType = "code";
     o.SaveTokens = true;
 
-    // Map incoming JSON keys (adjust to your provider)
-    // o.ClaimActions.MapJsonKey("department", "department");
+#pragma warning disable ASP0000 // Do not call 'IServiceCollection.BuildServiceProvider' in 'ConfigureServices'
+    var loggerFactory = builder.Services.BuildServiceProvider().GetRequiredService<ILoggerFactory>();
+#pragma warning restore ASP0000 // Do not call 'IServiceCollection.BuildServiceProvider' in 'ConfigureServices'
+    var logger = loggerFactory.CreateLogger("OIDC");
 
     o.Events = new OpenIdConnectEvents
     {
-        OnTokenValidated = async ctx =>
+        OnRedirectToIdentityProvider = ctx =>
         {
-            var identity = (ClaimsIdentity)ctx.Principal!.Identity!;
+            logger.LogInformation("Redirecting to Identity Provider: {Url}", ctx.ProtocolMessage.IssuerAddress);
+            return Task.CompletedTask;
+        },
+        OnMessageReceived = ctx =>
+        {
+            logger.LogInformation("OIDC Message Received: {Message}", ctx.ProtocolMessage);
+            return Task.CompletedTask;
+        },
+        OnTokenValidated = ctx =>
+        {
+            logger.LogInformation("Token Validated for user: {Name}", ctx.Principal.Identity?.Name);
+            var identity = (ClaimsIdentity)ctx.Principal.Identity;
+            //add nonce information
+
             identity.AddClaim(new Claim("department", "Finance"));
-           
+            return Task.CompletedTask;
+        },
+        OnAuthenticationFailed = ctx =>
+        {
+            logger.LogError(ctx.Exception, "Authentication Failed");
+            return Task.CompletedTask;
+        },
+        OnRemoteFailure = ctx =>
+        {
+            logger.LogError(ctx.Failure, "Remote Failure during OIDC");
+            return Task.CompletedTask;
+        },
+        OnTicketReceived = ctx =>
+        {
+            logger.LogInformation("Authentication Ticket Received");
+            return Task.CompletedTask;
+        },
+        OnAuthorizationCodeReceived = ctx =>
+        {
+            logger.LogInformation("Authorization Code Received");
+            return Task.CompletedTask;
+        },
+        OnTokenResponseReceived = ctx =>
+        {
+            logger.LogInformation("Token Response Received");
+            return Task.CompletedTask;
         }
     };
 
@@ -69,6 +85,7 @@ builder.Services.AddAuthentication(o =>
         RoleClaimType = "role"
     };
 });
+
 
 builder.Services.AddAuthorization(options =>
 {
